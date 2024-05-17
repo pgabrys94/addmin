@@ -276,7 +276,9 @@ def execute():
                     if param not in sshd_out:
                         shell_cmd(f'echo "{param} {flag}" | tee -a /etc/ssh/sshd_config')
                     else:
-                        if sshd_out[sshd_out.index(param) + 1] != flag:
+                        if sshd_out[sshd_out.index(param) + 1] == "#":
+                            shell_cmd(f'echo "{param} {flag}" | tee -a /etc/ssh/sshd_config')
+                        elif sshd_out[sshd_out.index(param) + 1] != flag:
                             shell_cmd(f"sed -i 's/^\s*\({param}\s*\).*$/\1{flag}/' /etc/ssh/sshd_config")
 
         def mod_authkeys(user_name, user_pubkey):
