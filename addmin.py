@@ -336,9 +336,11 @@ def execute():
             :return:
             """
             if unlock:
+                print(f"{rhost}: Unlocking {user}...")
                 flag = "-u"
                 sshd = f'sed -i "/^AllowUsers/s/$/ {user_name}/" /etc/ssh/sshd_config'
             else:
+                print(f"{rhost}: Locking out {user}...")
                 flag = "-l"
                 sshd = f'sed -i "/^AllowUsers/ s/\<{user_name}\>//g" /etc/ssh/sshd_config'
             commands = [
@@ -435,11 +437,9 @@ def execute():
                         mod_authkeys(user, pubkey)
                         # Lock user if required.
                         if lock_flag:
-                            print(f"{rhost}: Locking out {user}...")
                             lock_user(user)
                     else:
                         if lock_flag:
-                            print(f"{rhost}: Locking out {user}...")
                             lock_user(user)
                         if remove_flag:
                             print(f"{rhost}: Removing {user}...")
