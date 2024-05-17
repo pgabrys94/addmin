@@ -413,7 +413,6 @@ def execute():
                 passwd_content = shell_cmd('cat /etc/passwd')
 
                 mod_sshd(ruser)
-                breakpoint()
                 mod_authkeys(ruser, app_pubkey)
 
                 #   Iterate over users from inventory and set flags if username contains ! or #.
@@ -466,7 +465,6 @@ def execute():
 
     #   For each host introduced in inventory file, run concurrent thread.
     print("Establishing connections and acquiring superuser privileges...")
-    breakpoint()
     for host, sudo_pwd in hosts.items():
         print(f"Running thread for {host}...")
         threading.Thread(target=remote, args=(host, sudo_pwd, users,)).start()
