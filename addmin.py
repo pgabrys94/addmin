@@ -109,14 +109,16 @@ def loader(pwd_load=False, data_type=None):
                         temp_users = target()["users"]
                         change = False
                         for user in list(temp_users):
-                            for pubkey, pwd in temp_users[user]:
-                                if len(pwd) < pwd_req_len:
-                                    change = True
-                                    print(f"Temporary password for {user} is too short, extending...")
-                                    new_pwd = passgen(pwd, pwd_req_len)
-                                    temp_users[user][1] = new_pwd
-                                    print(f"Temporary password for {user} is now {new_pwd}.")
+                            current_pwd = temp_users[user][1]
+                            if len(current_pwd) < pwd_req_len:
+                                change = True
+                                new_pwd = passgen(current_pwd, pwd_req_len)
+                                temp_users[user][1] = new_pwd
+                                print(f"Temporary password for {user} extended to {new_pwd} .")
+
                         if change:
+                            print("\nKEEP THOSE PASSWORDS IN SAFE PLACE.")
+                            input("Press ENTER to continue...")
                             target.create("users", temp_users)
                             target.save()
                     return target()[data_type]
@@ -242,7 +244,7 @@ def execute():
         nested functions required for main purpose of program.
         :param remote_host: String -> username@[hostname or IP][:port], by default port is set to 22.
         :param remote_pwd: String -> sudo password required for obtaining elevated user privileges.
-        :param users_pubkeys: Dictionary -> contains logins and public keys of users.
+        :param users_pubkeys: Dictionary -> contains logins, public keys of users and temporary passwords.
         :return:
         """
 
@@ -274,8 +276,10 @@ def execute():
             :return:
             """
             #   because ssh password login will be blocked by default (only by pubkey authentication),
-            #   this is only for elevating user privileges. Should be changed by user on login.
-            commands = [f'useradd -m -s /bin/bash {user_name}', f'echo "{tmp_pwd}\n{tmp_pwd}" | passwd {user_name}']
+            #   this is only for elevating user privileges. User is forced to change on first login.
+            commands = [f'useradd -m -s /bin/bash {user_name}',
+                        f'echo "{tmp_pwd}\n{tmp_pwd}" | passwd {user_name}',
+                        f'chage -d 0 {user_name}']
             output = shell_cmd(commands)
             pwd_success = False
 
