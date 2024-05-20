@@ -270,6 +270,7 @@ def execute():
             """
             Sub-function for adding user.
             :param user_name: String -> username.
+            :param tmp_pwd: String -> temporary password from inventory file.
             :return:
             """
             #   because ssh password login will be blocked by default (only by pubkey authentication),
