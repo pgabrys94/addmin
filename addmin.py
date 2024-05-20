@@ -1,11 +1,14 @@
 #   version = 1.0
 from conson import Conson
+from getpass import getpass
 import paramiko
 import os
 import sys
 import time
 import bcrypt
 import threading
+import secrets
+import string
 
 
 def clean(func):
@@ -40,6 +43,19 @@ def loader(pwd_load=False, data_type=None):
     :param data_type: None -> "hosts" or "users", to return proper dictionaries from inventory file.
     :return: False -> if files does not exist, String (password) or Dict(inventory).
     """
+
+    def passgen(current_pwd="", desired_length=12):
+        """
+        Password generator/extender.
+        :param current_pwd: String -> If password is defined but not long enough, it will be automatically extended.
+        :param desired_length: Integer -> Desired length of password.
+        :return: String -> New password.
+        """
+        charset = string.ascii_letters + string.digits + string.punctuation
+        while len(current_pwd) != desired_length:
+            current_pwd += secrets.choice(charset)
+        return current_pwd
+
     @clean
     def proceed(passwd):
         """
@@ -48,14 +64,14 @@ def loader(pwd_load=False, data_type=None):
         :return: String -> password.
         """
         while True:
-            pwd = input("Enter password: ")
-            if len(pwd) == 0:
+            input_pwd = getpass("Enter password: ")
+            if len(input_pwd) == 0:
                 print("Try again.")
                 time.sleep(1)
             else:
-                if passwd and bcrypt.checkpw(pwd.encode('UTF-8'), passwd.encode('UTF-8')):
-                    return pwd
-                elif passwd and not bcrypt.checkpw(pwd.encode('UTF-8'), passwd.encode('UTF-8')):
+                if passwd and bcrypt.checkpw(input_pwd.encode('UTF-8'), passwd.encode('UTF-8')):
+                    return input_pwd
+                elif passwd and not bcrypt.checkpw(input_pwd.encode('UTF-8'), passwd.encode('UTF-8')):
                     print("Incorrect password.")
                     ch = input("Try again? y/N: ")
                     if ch.lower() == "y":
@@ -63,12 +79,12 @@ def loader(pwd_load=False, data_type=None):
                     else:
                         sys.exit()
                 else:
-                    pwd_2 = input("Confirm new password: ")
-                    if pwd == pwd_2:
+                    pwd_2 = getpass("Confirm new password: ")
+                    if input_pwd == pwd_2:
                         with open(pwd_hash_file, "w") as pf:
-                            hashed_password = bcrypt.hashpw(pwd.encode('UTF-8'), bcrypt.gensalt())
+                            hashed_password = bcrypt.hashpw(input_pwd.encode('UTF-8'), bcrypt.gensalt())
                             pf.write(hashed_password.decode('UTF-8'))
-                        return pwd
+                        return input_pwd
                     else:
                         print("Password does not match.")
                         ch = input("Try again? y/N: ")
@@ -89,13 +105,28 @@ def loader(pwd_load=False, data_type=None):
                                 temp_hosts = target()["hosts"]
                                 temp_hosts[host] = target.unveil(target()["hosts"][host][1:-1])
                                 target.create("hosts", temp_hosts)
+                    elif data_type == "users":
+                        temp_users = target()["users"]
+                        change = False
+                        for user in list(temp_users):
+                            for pubkey, pwd in temp_users[user]:
+                                if len(pwd) < pwd_req_len:
+                                    change = True
+                                    print(f"Temporary password for {user} is too short, extending...")
+                                    new_pwd = passgen(pwd, pwd_req_len)
+                                    temp_users[user][1] = new_pwd
+                                    print(f"Temporary password for {user} is now {new_pwd}.")
+                        if change:
+                            target.create("users", temp_users)
+                            target.save()
                     return target()[data_type]
                 else:
                     return target
             else:
                 return False
         else:
-            template = {"users": {"username": "pubkey"}, "hosts": {"username@hostname/IP[:port]": "password"}}
+            template = {"users": {"username": ["pubkey", "temp,pwd"]},
+                        "hosts": {"username@hostname/IP[:port]": "password"}}
             target = Conson(inventory_file_name, salt=password)
             for temp, temp_data in template.items():
                 target.create(temp, temp_data)
@@ -204,6 +235,7 @@ def execute():
     Main function responsible for starting workers.
     :return:
     """
+
     def remote(remote_host, remote_pwd, users_pubkeys):
         """
         Each thread will start from here. this function contains all
@@ -213,6 +245,7 @@ def execute():
         :param users_pubkeys: Dictionary -> contains logins and public keys of users.
         :return:
         """
+
         def shell_cmd(cmds):
             """
             Sub-function for remote shell commands execution function.
@@ -233,7 +266,7 @@ def execute():
                 shell_output = (shell.recv(65535).decode("utf-8").split())
             return shell_output
 
-        def add_user(user_name):
+        def add_user(user_name, tmp_pwd):
             """
             Sub-function for adding user.
             :param user_name: String -> username.
@@ -241,8 +274,7 @@ def execute():
             """
             #   because ssh password login will be blocked by default (only by pubkey authentication),
             #   this is only for elevating user privileges. Should be changed by user on login.
-            clean_pwd = "zmienmnieszybko"
-            commands = [f'useradd -m -s /bin/bash {user_name}', f'echo "{clean_pwd}\n{clean_pwd}" | passwd {user_name}']
+            commands = [f'useradd -m -s /bin/bash {user_name}', f'echo "{tmp_pwd}\n{tmp_pwd}" | passwd {user_name}']
             output = shell_cmd(commands)
             pwd_success = False
 
@@ -250,7 +282,7 @@ def execute():
                 if "hasło zostało zmienione" or "password updated succesfully" in item:
                     pwd_success = True
             if pwd_success:
-                print(f"{rhost}: User {user} created successfully with temporary password: {clean_pwd}.")
+                print(f"{rhost}: User {user} created successfully.")
             else:
                 print(f"{rhost}: Failed to add user {user}.")
 
@@ -418,7 +450,7 @@ def execute():
                 mod_authkeys(ruser, app_pubkey)
 
                 #   Iterate over users from inventory and set flags if username contains ! or #.
-                for user, pubkey in users_pubkeys.items():
+                for user, pubkey_pwd in users_pubkeys.items():
                     remove_flag = False
                     lock_flag = False
                     if user.startswith("#"):
@@ -436,9 +468,9 @@ def execute():
                     # If user is not marked for deletion, create his account.
                     if not user_present and not remove_flag:
                         print(f"{rhost}: {user} does not exist, creating...")
-                        add_user(user)
+                        add_user(user, pubkey_pwd[1])
                         mod_sshd(user)
-                        mod_authkeys(user, pubkey)
+                        mod_authkeys(user, pubkey_pwd[0])
                         # Lock user if required.
                         if lock_flag:
                             lock_user(user)
@@ -452,7 +484,7 @@ def execute():
                             #   If user exists, try to update host configuration for this user.
                             print(f"{rhost}: {user} already exists, updating...")
                             mod_sshd(user)
-                            mod_authkeys(user, pubkey)
+                            mod_authkeys(user, pubkey_pwd[0])
                 #   Attempt sshd service restart.
                 try:
                     shell_cmd("systemctl restart sshd")
@@ -477,6 +509,7 @@ inventory_file_path = os.path.join(os.getcwd(), inventory_file_name)
 pwd_hash_file = os.path.join(os.getcwd(), ".secret")
 privkey_file = os.path.join(os.getcwd(), "privkey")
 pubkey_file = os.path.join(os.getcwd(), "pubkey")
+pwd_req_len = 12
 
 password = loader(True)
 users = loader(False, "users")
