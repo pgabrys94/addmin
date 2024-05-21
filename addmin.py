@@ -44,17 +44,17 @@ def loader(pwd_load=False, data_type=None):
     :return: False -> if files does not exist, String (password) or Dict(inventory).
     """
 
-    def passgen(current_pwd="", desired_length=12):
+    def passgen(curr_pwd="", desired_length=12):
         """
         Password generator/extender.
-        :param current_pwd: String -> If password is defined but not long enough, it will be automatically extended.
+        :param curr_pwd: String -> If password is defined but not long enough, it will be automatically extended.
         :param desired_length: Integer -> Desired length of password.
         :return: String -> New password.
         """
         charset = string.ascii_letters + string.digits + string.punctuation
-        while len(current_pwd) != desired_length:
-            current_pwd += secrets.choice(charset)
-        return current_pwd
+        while len(curr_pwd) != desired_length:
+            curr_pwd += secrets.choice(charset)
+        return curr_pwd
 
     @clean
     def proceed(passwd):
@@ -108,17 +108,36 @@ def loader(pwd_load=False, data_type=None):
                     elif data_type == "users":
                         temp_users = target()["users"]
                         change = False
+                        changed_password = False
+                        #   Check users data correctness
                         for user in list(temp_users):
+                            if type(temp_users[user]) is not list:
+                                temp_users[user] = [temp_users[user]]
+                                change = True
+
+                            if "ssh-rsa" in temp_users[user][0]:
+                                temp_users[user].append("")
+                            else:
+                                temp_users[user].insert(0, "")
+                                change = True
+
                             current_pwd = temp_users[user][1]
                             if len(current_pwd) < pwd_req_len:
                                 change = True
+                                changed_password = True
                                 new_pwd = passgen(current_pwd, pwd_req_len)
                                 temp_users[user][1] = new_pwd
-                                print(f"Temporary password for {user} extended to {new_pwd} .")
+                                print(f"Temporary password for {user} changed to\t{new_pwd}\n")
+
+                            if current_pwd.startswith("<") and current_pwd.endswith(">"):
+                                temp_users = target()["users"]
+                                temp_users[user][1] = target.unveil(target()["users"][user][1][1:-1])
+                                target.create("users", temp_users)
 
                         if change:
-                            print("\nKEEP THOSE PASSWORDS IN SAFE PLACE.")
-                            input("Press ENTER to continue...")
+                            if changed_password:
+                                print("\nKEEP THOSE PASSWORDS IN SAFE PLACE.")
+                                input("Press ENTER to clear and continue...")
                             target.create("users", temp_users)
                             target.save()
                     return target()[data_type]
@@ -127,7 +146,7 @@ def loader(pwd_load=False, data_type=None):
             else:
                 return False
         else:
-            template = {"users": {"username": ["pubkey", "temp,pwd"]},
+            template = {"users": {"username": ["pubkey", "temp_pwd"]},
                         "hosts": {"username@hostname/IP[:port]": "password"}}
             target = Conson(inventory_file_name, salt=password)
             for temp, temp_data in template.items():
@@ -144,10 +163,11 @@ def loader(pwd_load=False, data_type=None):
 
 def pwd_encryption():
     """
-    Checks if host(s) password(s) in inventory are encrypted. If not, encrypts them.
+    Checks if host(s) password(s) and temporary users passwords in inventory are encrypted. If not, encrypts them.
     :return:
     """
     changed = False
+    users_changed = False
     target = loader()
     for host, pwd in target()["hosts"].items():
         if not pwd.startswith("<") and not pwd.endswith(">"):
@@ -155,10 +175,27 @@ def pwd_encryption():
             temp_hosts = target()["hosts"]
             temp_hosts[host] = "<" + temp_hosts[host] + ">"
             target.create("hosts", temp_hosts)
-            print(f"Password for {host} has been encrypted.")
+            print(f"Administrator password for {host} has been encrypted.")
             changed = True
 
+    # Creating separate temporary instance for conson.veil() application, due to nesting.
+    temp_cred = Conson(salt=password)
+    for username, cred in target()["users"].items():
+        temp_cred.create(username, cred.copy())
+        if not cred[1].startswith("<") and not cred[1].endswith(">"):
+            users_changed = True
+            temp_cred.veil(username, 1)
+            temp_cred.create(username, [temp_cred()[username][0], "<" + temp_cred()[username][1] + ">"])
+            print(f"Password for {username} has been encrypted.")
+
     if changed:
+        if users_changed:
+            print("\nEncrypted user credentials will overwrite raw passwords in inventory file:\n")
+            for username, cred in target()["users"].items():
+                print(f"{username}\t{cred[1]}")
+            print("\nKEEP THOSE PASSWORDS IN SAFE PLACE.")
+            input("Press ENTER to continue...")
+            target.create("users", temp_cred())
         target.save()
         print("Inventory file updated successfully.")
         time.sleep(2)
@@ -325,6 +362,9 @@ def execute():
             :param user_pubkey: String -> string with rsa public key.
             :return:
             """
+            if len(user_pubkey) == 0 or "ssh-rsa" not in user_pubkey:
+                print(f"WARNING: Missing ssh-rsa pubkey for {user_name}, skipping...")
+                return
             try:
                 #   Check if .ssh directory exists in the user's home directory.
                 command = f'test -d /home/{user_name}/.ssh && echo "Exists" || echo "Not Exists"'
