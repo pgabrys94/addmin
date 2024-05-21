@@ -56,7 +56,7 @@ To block user account, you can use hashtag #:
             "#username": ["pubkey", "temp_pwd"]
         },
 
-Blocked user will be unable to log both by sshd (removing from AllowUsers section og sshd_config), and console.
+Blocked user will be unable to log both by sshd (by removing from AllowUsers section of sshd_config), and console.
 
 Note, that users will persist in inventory file - you can easily restore them by removing prefixes.
 
