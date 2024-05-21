@@ -566,12 +566,12 @@ pwd_hash_file = os.path.join(os.getcwd(), ".secret")
 privkey_file = os.path.join(os.getcwd(), "privkey")
 pubkey_file = os.path.join(os.getcwd(), "pubkey")
 pwd_req_len = 12
+sysname = pc_data("nodename")
 
 password = loader(True)
 users = loader(False, "users")
 hosts = loader(False, "hosts")
 app_pubkey = privkey_check(privkey_file, pubkey_file)
-sysname = pc_data("nodename")
 
 #   If any of required files was missing, tell user to update already crated templates and exit program.
 if not users or not hosts or not password:
