@@ -1,4 +1,4 @@
-#   version = 1.1.0
+#   version = 1.1.1
 from conson import Conson
 from getpass import getpass
 import paramiko
