@@ -218,6 +218,8 @@ def privkey_check(priv_path, pub_path):
     :param pub_path: String -> path to public key file.
     :return: String -> pubkey or None
     """
+    global sysname
+
     if os.path.exists(priv_path):
         print("Private key file detected...")
         time.sleep(1)
