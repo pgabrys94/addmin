@@ -109,7 +109,7 @@ def loader(pwd_load=False, data_type=None):
         if os.path.exists(inventory_file_path):
             target = Conson(inventory_file_name, salt=password)
             target.load()
-            if target() == template:
+            if target() == template or len(target()) == 0:
                 return False
 
             if "users" in list(target()) and "hosts" in list(target()):
@@ -580,7 +580,7 @@ app_pubkey = privkey_check(privkey_file, pubkey_file)
 
 #   If any of required files was missing, tell user to update already crated templates and exit program.
 if not users or not hosts or not password or not app_pubkey:
-    print("Please update your inventory files.")
+    print("Please check/update your inventory files.")
     input("Press ENTER to exit...")
     sys.exit()
 else:
