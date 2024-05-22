@@ -111,6 +111,7 @@ def loader(pwd_load=False, data_type=None):
             target.load()
             if target() == template:
                 return False
+
             if "users" in list(target()) and "hosts" in list(target()):
                 if data_type is not None:
                     if data_type == "hosts":
@@ -129,11 +130,12 @@ def loader(pwd_load=False, data_type=None):
                                 temp_users[user] = [temp_users[user]]
                                 change = True
 
-                            if "ssh-rsa" in temp_users[user][0]:
-                                temp_users[user].append("")
-                            else:
-                                temp_users[user].insert(0, "")
-                                change = True
+                            if len(temp_users[user]) < 2:
+                                if "ssh-rsa" in temp_users[user][0]:
+                                    temp_users[user].append("")
+                                else:
+                                    temp_users[user].insert(0, "")
+                                    change = True
 
                             current_pwd = temp_users[user][1]
                             if len(current_pwd) < pwd_req_len:
@@ -226,8 +228,7 @@ def privkey_check(priv_path, pub_path):
     if os.path.exists(priv_path):
         print("Private key file detected...")
         time.sleep(1)
-        pubkey = None
-        privkey = None
+
         try:
             #   try to load privkey(no-password attempt first)
             try:
