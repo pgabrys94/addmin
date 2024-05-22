@@ -1,4 +1,4 @@
-#   version = 1.1.2
+#   version = 1.1.3
 from conson import Conson
 from getpass import getpass
 import paramiko
@@ -102,10 +102,15 @@ def loader(pwd_load=False, data_type=None):
                         else:
                             sys.exit(False)
 
+    template = {"users": {"username": ["pubkey", "temp_pwd"]},
+                "hosts": {"username@hostname/IP[:port]": "password"}}
+
     if not pwd_load:
         if os.path.exists(inventory_file_path):
             target = Conson(inventory_file_name, salt=password)
             target.load()
+            if target() == template:
+                return False
             if "users" in list(target()) and "hosts" in list(target()):
                 if data_type is not None:
                     if data_type == "hosts":
@@ -155,8 +160,6 @@ def loader(pwd_load=False, data_type=None):
             else:
                 return False
         else:
-            template = {"users": {"username": ["pubkey", "temp_pwd"]},
-                        "hosts": {"username@hostname/IP[:port]": "password"}}
             target = Conson(inventory_file_name, salt=password)
             for temp, temp_data in template.items():
                 target.create(temp, temp_data)
@@ -236,6 +239,7 @@ def privkey_check(priv_path, pub_path):
                 pubkey = privkey.get_base64()
             except Exception as e:
                 print(f"ERROR: Cannot read existing private key: {e}.")
+                return False
 
                 #   checking pubkey existence
             if os.path.exists(pub_path):
@@ -266,6 +270,7 @@ def privkey_check(priv_path, pub_path):
                     print(f"ERROR while generating public key: {err}")
         except Exception as err:
             print(f"ERROR: Invalid privkey: {err}")
+            return False
     else:
         #   generating new pair
         key = paramiko.RSAKey.generate(3072)
@@ -275,8 +280,7 @@ def privkey_check(priv_path, pub_path):
             full_pubkey = f"ssh-rsa {public_key} addmin@{sysname}"
             f.write(full_pubkey)
         print("Public-private key pair has been created. Please, upload public key to target hosts.")
-        input("Press ENTER to exit...")
-        sys.exit()
+        return False
 
 
 @clean
@@ -574,8 +578,8 @@ hosts = loader(False, "hosts")
 app_pubkey = privkey_check(privkey_file, pubkey_file)
 
 #   If any of required files was missing, tell user to update already crated templates and exit program.
-if not users or not hosts or not password:
-    print("Template files created, update users and hosts files.")
+if not users or not hosts or not password or not app_pubkey:
+    print("Please update your inventory files.")
     input("Press ENTER to exit...")
     sys.exit()
 else:
