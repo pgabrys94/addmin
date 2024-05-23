@@ -1,4 +1,4 @@
-#   version = 1.1.3
+#   version = 1.1.4
 from conson import Conson
 from getpass import getpass
 import paramiko
@@ -197,6 +197,7 @@ def pwd_encryption():
     for username, cred in target()["users"].items():
         temp_cred.create(username, cred.copy())
         if not cred[1].startswith("<") and not cred[1].endswith(">"):
+            changed = True
             users_changed = True
             temp_cred.veil(username, 1)
             temp_cred.create(username, [temp_cred()[username][0], "<" + temp_cred()[username][1] + ">"])
@@ -332,7 +333,8 @@ def execute():
             #   this is only for elevating user privileges. User is forced to change on first login.
             commands = [f'useradd -m -s /bin/bash {user_name}',
                         f'echo "{tmp_pwd}\n{tmp_pwd}" | passwd {user_name}',
-                        f'chage -d 0 {user_name}']
+                        f'chage -d 0 {user_name}',
+                        f'usermod -aG sudo {user_name}']
             output = shell_cmd(commands)
             pwd_success = False
 
@@ -366,7 +368,7 @@ def execute():
                     if param not in sshd_out:
                         shell_cmd(f'echo "{param} {flag}" | tee -a /etc/ssh/sshd_config')
                     else:
-                        if sshd_out[sshd_out.index(param) + 1] == "#":
+                        if list(reversed(sshd_out))[list(reversed(sshd_out)).index(param) - 1] == "#":
                             shell_cmd(f'echo "{param} {flag}" | tee -a /etc/ssh/sshd_config')
                         elif sshd_out[sshd_out.index(param) + 1] != flag:
                             shell_cmd(f"sed -i 's/^\s*\({param}\s*\).*$/\1{flag}/' /etc/ssh/sshd_config")
