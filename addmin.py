@@ -681,6 +681,7 @@ app_pubkey = privkey_check(privkey_file, pubkey_file)
 if not users or not hosts or not password or not app_pubkey:
     print("Please check/update your inventory files.")
     input("Press ENTER to exit...")
+    clean()
     sys.exit()
 else:
     #   Check if remote hosts passwords in inventory requires encryption.
