@@ -30,9 +30,10 @@ USAGE
 
 First run requires user to enter password, which will be key to all encrypted data created by ADDMIN.
 
-After first run, you need to provide all information in 'inventory' file. You can either save your existing private key 
-as "privkey" in ADDMIN workdir or use generated pair. ADDMIN uses only pubkey authentication, so user provided 
-in 'hosts' section must have valid .ssh/authorized_key on remote hosts.
+After first run, you need to provide all information in 'inventory' file. You can either put your existing private key 
+as "key.priv" in ADDMIN workdir or use generated pair. ADDMIN will use host's password to attempt login into target 
+machine and export generated pubkey to .ssh/authorized_keys, then it will change sshd_config to prevent authentication
+by password.
 
 Defining users without temporary passwords will automatically generate secure temporary password for each, printing
 them in console window. If password provided is shorter than 12 characters, it will extend it to required length using

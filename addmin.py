@@ -551,7 +551,8 @@ def execute():
         try:
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            client.connect(hostname=rhost, port=rport, username=ruser, password=password, key_filename=privkey_file)
+            client.connect(hostname=rhost, port=rport, username=ruser, password=remote_pwd,
+                           passphrase=password, key_filename=privkey_file)
 
             attempt = 0
             while attempt < 3:
