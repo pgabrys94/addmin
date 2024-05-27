@@ -122,12 +122,16 @@ def loader(pwd_load=False, data_type=None):
                 if os.path.exists(assumed_pubkey):
                     with open(assumed_pubkey, "r") as pkey_file:
                         public_key = pkey_file.read()
-                    if "ssh-rsa" in public_key.split():
+                    if len(public_key) == 0:
+                        return ""
+                    elif "ssh-rsa" in public_key.split():
                         return public_key
                     else:
-                        return False
+                        return ""
+                else:
+                    return ""
         except Exception:
-            return False
+            return ""
 
     template = {"users": {"username": ["pubkey", "temp_pwd"]},
                 "hosts": {"username@hostname/IP[:port]": "password"}}
@@ -158,10 +162,7 @@ def loader(pwd_load=False, data_type=None):
 
                         #   Check if inventory contains pubkey or pubkey file name and check its correctness
                         for user, user_pwd in temp_users.items():
-                            try:
-                                pubkey_variation[user] = key_or_file(user_pwd[0])
-                            except Exception:
-                                pubkey_variation[user] = False
+                            pubkey_variation[user] = key_or_file(user_pwd[0])
 
                         #   Check users data correctness
                         for user in list(temp_users):
@@ -571,7 +572,6 @@ def execute():
 
             # Acquire /etc/passwd content
             passwd_content = shell_cmd('cat /etc/passwd')
-
             mod_sshd(ruser)
             mod_authkeys(ruser, app_pubkey)
 
