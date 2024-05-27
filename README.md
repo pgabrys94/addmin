@@ -15,6 +15,13 @@ Requirements:
 
 -------------------------------
 
+v1.2.0
+
+-added function for reading user pubkey from file (subdir users-pubkeys, created automatically);
+-added tryout and timeout mechanism when invoking elevated shell;
+-added retry mechanism for failed threads;
+-changed name of generated/required private and public keys: key.priv, key.pub.
+
 v1.1.3
 
 USAGE

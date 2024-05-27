@@ -1,4 +1,4 @@
-#   version = 1.1.4
+#   version = 1.2.0
 from conson import Conson
 from getpass import getpass
 import paramiko
@@ -10,30 +10,36 @@ import threading
 import secrets
 import string
 import platform
+import queue
 
 
-def clean(func):
+def clean(func=None):
     """
     Decorator containing window cleaning function.
     :param func: Passed function.
     :return:
     """
 
+    def swipe():
+        system = os.name
+        if system == "nt":
+            os.system("cls")
+        else:
+            os.system("clear")
+
     def header():
         title = "### ADDMIN ###"
         print("{0}\n{1}\n{0}\n\n".format("#" * len(title), title))
 
     def fn(*args, **kwargs):
-        system = os.name
-
-        if system == "nt":
-            os.system("cls")
-        else:
-            os.system("clear")
+        swipe()
         header()
         return func(*args, **kwargs)
 
-    return fn
+    if func is not None:
+        return fn
+    else:
+        swipe()
 
 
 def pc_data(param):
@@ -102,6 +108,27 @@ def loader(pwd_load=False, data_type=None):
                         else:
                             sys.exit(False)
 
+    def key_or_file(phrase):
+        """
+        Check if pubkey postion in inventory is a proper pubkey or filename containing pubkey.
+        :param phrase: String.
+        :return: String or False if conditions not met.
+        """
+        try:
+            if "ssh-rsa" in phrase.split():
+                return phrase
+            else:
+                assumed_pubkey = os.path.join(users_pubkeys_dir, phrase)
+                if os.path.exists(assumed_pubkey):
+                    with open(assumed_pubkey, "r") as pkey_file:
+                        public_key = pkey_file.read()
+                    if "ssh-rsa" in public_key.split():
+                        return public_key
+                    else:
+                        return False
+        except Exception:
+            return False
+
     template = {"users": {"username": ["pubkey", "temp_pwd"]},
                 "hosts": {"username@hostname/IP[:port]": "password"}}
 
@@ -111,6 +138,9 @@ def loader(pwd_load=False, data_type=None):
             target.load()
             if target() == template or len(target()) == 0:
                 return False
+
+            if not os.path.exists(users_pubkeys_dir):
+                os.mkdir(users_pubkeys_dir)
 
             if "users" in list(target()) and "hosts" in list(target()):
                 if data_type is not None:
@@ -124,6 +154,15 @@ def loader(pwd_load=False, data_type=None):
                         temp_users = target()["users"]
                         change = False
                         changed_password = False
+                        pubkey_variation = {}
+
+                        #   Check if inventory contains pubkey or pubkey file name and check its correctness
+                        for user, user_pwd in temp_users.items():
+                            try:
+                                pubkey_variation[user] = key_or_file(user_pwd[0])
+                            except Exception:
+                                pubkey_variation[user] = False
+
                         #   Check users data correctness
                         for user in list(temp_users):
                             if type(temp_users[user]) is not list:
@@ -131,7 +170,7 @@ def loader(pwd_load=False, data_type=None):
                                 change = True
 
                             if len(temp_users[user]) < 2:
-                                if "ssh-rsa" in temp_users[user][0]:
+                                if "ssh-rsa" in pubkey_variation[user].split():
                                     temp_users[user].append("")
                                 else:
                                     temp_users[user].insert(0, "")
@@ -156,6 +195,11 @@ def loader(pwd_load=False, data_type=None):
                                 input("Press ENTER to clear and continue...")
                             target.create("users", temp_users)
                             target.save()
+
+                        for user, user_pwd in temp_users.items():
+                            temp_users[user][0] = key_or_file(user_pwd[0])
+                        target.create("users", temp_users)
+
                     return target()[data_type]
                 else:
                     return target
@@ -292,13 +336,14 @@ def execute():
     :return:
     """
 
-    def remote(remote_host, remote_pwd, users_pubkeys):
+    def remote(remote_host, remote_pwd, users_pubkeys, is_done):
         """
         Each thread will start from here. this function contains all
         nested functions required for main purpose of program.
         :param remote_host: String -> username@[hostname or IP][:port], by default port is set to 22.
         :param remote_pwd: String -> sudo password required for obtaining elevated user privileges.
         :param users_pubkeys: Dictionary -> contains logins, public keys of users and temporary passwords.
+        :param is_done: Boolean -> indicates whether the thread finished successfully.
         :return:
         """
 
@@ -471,24 +516,34 @@ def execute():
                 "Uwierzytelnienie się nie powiodło",
                 "Authentication failure"
             ]
+            timeout = 5
             supershell = client.invoke_shell()
             super_output = []
             while supershell.recv_ready():
                 time.sleep(0.25)
+                timeout -= 0.25
+                if timeout <= 0:
+                    return None
             supershell.recv(65535)
             sudo_cmd = ["su -", supass, "whoami"]
 
             for cmd in sudo_cmd:
+                timeout = 5
                 supershell.send((cmd + "\n").encode("UTF-8"))
                 while not supershell.recv_ready():
                     time.sleep(0.25)
+                    if timeout <= 0:
+                        return None
                 time.sleep(1)
                 super_output = supershell.recv(65535).decode("UTF-8").splitlines() if cmd == sudo_cmd[2] else []
 
-            if "root" not in super_output[-2] or any(failed in super_output for failed in negative_responses):
+            try:
+                if "root" not in super_output[-2] or any(failed in super_output for failed in negative_responses):
+                    return None
+                else:
+                    return supershell
+            except Exception:
                 return None
-            else:
-                return supershell
 
         ruser, rhost = remote_host.split(":")[0].split("@")
         rport = remote_host.split(":")[1] if len(remote_host.split(":")) == 2 else 22
@@ -498,80 +553,122 @@ def execute():
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             client.connect(hostname=rhost, port=rport, username=ruser, password=password, key_filename=privkey_file)
 
-            shell = sudo_shell(remote_pwd)
-            if shell is None:
-                #   If sub-function fails to invoke elevated remote shell, close connection and raise error.
-                client.close()
-                raise Exception(f"Invalid sudo password")
-            else:
-                print(f"{rhost}: Elevated shell invoked.")
+            attempt = 0
+            while attempt < 3:
+                attempt += 1
+                shell = sudo_shell(remote_pwd)
+                if shell is None:
+                    if attempt < 3:
+                        print(f"{rhost}: failed to invoke elevated shell... {attempt}/3")
+                    else:
+                        #   If sub-function fails to invoke elevated remote shell, close connection and raise error.
+                        client.close()
+                        raise Exception("Invalid sudo password")
+                else:
+                    print(f"{rhost}: Elevated shell invoked.")
+                    break
 
-                # Acquire /etc/passwd content
-                passwd_content = shell_cmd('cat /etc/passwd')
+            # Acquire /etc/passwd content
+            passwd_content = shell_cmd('cat /etc/passwd')
 
-                mod_sshd(ruser)
-                mod_authkeys(ruser, app_pubkey)
+            mod_sshd(ruser)
+            mod_authkeys(ruser, app_pubkey)
 
-                #   Iterate over users from inventory and set flags if username contains ! or #.
-                for user, pubkey_pwd in users_pubkeys.items():
-                    remove_flag = False
-                    lock_flag = False
-                    if user.startswith("#"):
-                        user = user[1:]
-                        lock_flag = True
-                    elif user.startswith("!"):
-                        user = user[1:]
-                        remove_flag = True
+            #   Iterate over users from inventory and set flags if username contains ! or #.
+            for user, pubkey_pwd in users_pubkeys.items():
+                remove_flag = False
+                lock_flag = False
+                if user.startswith("#"):
+                    user = user[1:]
+                    lock_flag = True
+                elif user.startswith("!"):
+                    user = user[1:]
+                    remove_flag = True
 
-                    # Check if user is present in /etc/passwd
-                    user_present = False
-                    for content in passwd_content:
-                        if user in content:
-                            user_present = True
-                    # If user is not marked for deletion, create his account.
-                    if not user_present and not remove_flag:
-                        print(f"{rhost}: {user} does not exist, creating...")
-                        add_user(user, pubkey_pwd[1])
+                # Check if user is present in /etc/passwd
+                user_present = False
+                for content in passwd_content:
+                    if user in content:
+                        user_present = True
+                # If user is not marked for deletion, create his account.
+                if not user_present and not remove_flag:
+                    print(f"{rhost}: {user} does not exist, creating...")
+                    add_user(user, pubkey_pwd[1])
+                    mod_sshd(user)
+                    mod_authkeys(user, pubkey_pwd[0])
+                    # Lock user if required.
+                    if lock_flag:
+                        lock_user(user)
+                else:
+                    if lock_flag:
+                        lock_user(user)
+                    if remove_flag:
+                        print(f"{rhost}: Removing {user}...")
+                        remove_user(user)
+                    else:
+                        #   If user exists, try to update host configuration for this user.
+                        print(f"{rhost}: {user} already exists, updating...")
                         mod_sshd(user)
                         mod_authkeys(user, pubkey_pwd[0])
-                        # Lock user if required.
-                        if lock_flag:
-                            lock_user(user)
-                    else:
-                        if lock_flag:
-                            lock_user(user)
-                        if remove_flag:
-                            print(f"{rhost}: Removing {user}...")
-                            remove_user(user)
-                        else:
-                            #   If user exists, try to update host configuration for this user.
-                            print(f"{rhost}: {user} already exists, updating...")
-                            mod_sshd(user)
-                            mod_authkeys(user, pubkey_pwd[0])
-                #   Attempt sshd service restart.
-                try:
-                    shell_cmd("systemctl restart sshd")
-                    print(f"{rhost}: Performed sshd service restart.")
-                except Exception as sr_error:
-                    print(f"{remote_host}: Unable to restart sshd service: {sr_error}")
-                print(f"{rhost}: Done.")
-                client.close()
+            #   Attempt sshd service restart.
+            try:
+                shell_cmd("systemctl restart sshd")
+                print(f"{rhost}: Performed sshd service restart.")
+            except Exception as sr_error:
+                print(f"{remote_host}: Unable to restart sshd service: {sr_error}")
+            print(f"{rhost}: Done.")
+            is_done.put(True)
+            client.close()
 
         except Exception as e:
-            print(f"{remote_host}: ERROR: {e}")
+            if str(e) == "Invalid sudo password":
+                print(f"{remote_host}: ERROR: {e}")
+                is_done.put(True)
+            else:
+                print(f"{remote_host}: ERROR: {e}")
+                is_done.put(False)
 
     #   For each host introduced in inventory file, run concurrent thread.
     print("Establishing connections and acquiring superuser privileges...")
-    for host, sudo_pwd in hosts.items():
-        print(f"Running thread for {host}...")
-        threading.Thread(target=remote, args=(host, sudo_pwd, users,)).start()
+    results = {}
+    threads = {}
+    max_thread_try = 3
+
+    for host in list(hosts):
+        results[host] = [queue.Queue(), 0]
+
+    done = False
+    while not done:
+        done = True
+        for host, sudo_pwd in hosts.items():
+            result = False if results[host][0].empty() or results[host][1] == 0 else results[host][0].get_nowait()
+            if results[host][1] == 0 or not result:
+                results[host][1] += 1
+                if results[host][1] <= max_thread_try:
+                    print("{}unning thread for {}... {}/{}".format("R" if results[host][1] == 1 else "Re-r",
+                                                                   host, results[host][1], max_thread_try))
+                    threads[host] = threading.Thread(target=remote, args=(host, sudo_pwd, users, results[host][0]))
+                    threads[host].start()
+                    done = False
+                else:
+                    print(f"Job failed for {host}; check host configuration and inventory file.")
+            elif result:
+                results[host][0].put(True)
+
+        for thread in list(threads.values()):
+            thread.join()
+
+    print("\n\nAll jobs done.")
+    input("Press enter to exit...")
+    clean()
 
 
 inventory_file_name = "inventory"
 inventory_file_path = os.path.join(os.getcwd(), inventory_file_name)
 pwd_hash_file = os.path.join(os.getcwd(), ".secret")
-privkey_file = os.path.join(os.getcwd(), "privkey")
-pubkey_file = os.path.join(os.getcwd(), "pubkey")
+privkey_file = os.path.join(os.getcwd(), "addmin.priv")
+pubkey_file = os.path.join(os.getcwd(), "addmin.pub")
+users_pubkeys_dir = os.path.join(os.getcwd(), "users-pubkeys")
 pwd_req_len = 12
 sysname = pc_data("nodename")
 
