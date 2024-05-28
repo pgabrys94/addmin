@@ -1,4 +1,6 @@
-#   version = 1.2.0
+#   version = 1.2.5
+import json
+
 from conson import Conson
 from getpass import getpass
 import paramiko
@@ -13,13 +15,21 @@ import platform
 import queue
 
 
+#   Flags:
+
+verbose = any(flag in sys.argv[1:] for flag in ['-v', 'v', '--verbose'])
+initiate = any(flag in sys.argv[1:] for flag in ['-i', 'i', '--init'])
+skip_sshd_config = any(flag in sys.argv[1:] for flag in ['-s', 's', '--skip-sshd'])
+o_b_o = any(flag in sys.argv[1:] for flag in ['-o', 'o', '--one-by-one'])
+send_help = any(flag in sys.argv[1:] for flag in ['-h', 'h', '--help'])
+
+
 def clean(func=None):
     """
     Decorator containing window cleaning function.
     :param func: Passed function.
     :return:
     """
-
     def swipe():
         system = os.name
         if system == "nt":
@@ -36,10 +46,15 @@ def clean(func=None):
         header()
         return func(*args, **kwargs)
 
-    if func is not None:
-        return fn
+    global verbose
+
+    if verbose:
+        return func
     else:
-        swipe()
+        if func is not None:
+            return fn
+        else:
+            swipe()
 
 
 def pc_data(param):
@@ -58,6 +73,8 @@ def loader(pwd_load=False, data_type=None):
     :param data_type: None -> "hosts" or "users", to return proper dictionaries from inventory file.
     :return: False -> if files does not exist, String (password) or Dict(inventory).
     """
+    if verbose:
+        print("Loading data...")
 
     def passgen(curr_pwd="", desired_length=12):
         """
@@ -66,6 +83,9 @@ def loader(pwd_load=False, data_type=None):
         :param desired_length: Integer -> Desired length of password.
         :return: String -> New password.
         """
+        if verbose:
+            print("{}password".format("Generating" if len(curr_pwd) == 0 else "Expanding"))
+
         charset = string.ascii_letters + string.digits + string.punctuation
         while len(curr_pwd) != desired_length:
             curr_pwd += secrets.choice(charset)
@@ -78,6 +98,8 @@ def loader(pwd_load=False, data_type=None):
         :param passwd: True if .secret is present(password has been set) or False if password is meant to be set.
         :return: String -> password.
         """
+        if verbose:
+            print("Proceed with password...")
         while True:
             input_pwd = getpass("Enter password: ")
             if len(input_pwd) == 0:
@@ -114,110 +136,182 @@ def loader(pwd_load=False, data_type=None):
         :param phrase: String.
         :return: String or False if conditions not met.
         """
+        def nothing():
+            if verbose:
+                print(f"Pubkey is absent...")
+                return ""
+
+        if verbose:
+            print(f"Check pubkey presence...")
         try:
             if "ssh-rsa" in phrase.split():
+                if verbose:
+                    print(f"Detected public key sequence...")
                 return phrase
             else:
                 assumed_pubkey = os.path.join(users_pubkeys_dir, phrase)
                 if os.path.exists(assumed_pubkey):
+                    if verbose:
+                        print(f"{phrase} file exists, trying to load...")
                     with open(assumed_pubkey, "r") as pkey_file:
                         public_key = pkey_file.read()
                     if len(public_key) == 0:
-                        return ""
+                        if verbose:
+                            print(f"Pubkey file seems empty...")
+                        nothing()
                     elif "ssh-rsa" in public_key.split():
+                        if verbose:
+                            print(f"Public key found...")
                         return public_key
                     else:
-                        return ""
+                        nothing()
                 else:
-                    return ""
+                    nothing()
         except Exception:
-            return ""
+            nothing()
 
-    template = {"users": {"username": ["pubkey", "temp_pwd"]},
-                "hosts": {"username@hostname/IP[:port]": "password"}}
+    def checkout(inv_file_path):
+        """
+        Inventory file format verification.
+        :param inv_file_path: String -> Path to inventory file.
+        :return: Exception if conditions unmet, else True.
+        """
+        if verbose:
+            print(f"Checking inventory file...")
+        prefix = "Inventory: "
+        with open(inv_file_path, "r") as inv_file:
+            file_content = inv_file.read()
+            if not file_content.startswith("{") and not file_content.endswith("}"):
+                return Exception(f"{prefix}file does not contain jsonizable data.")
+            else:
+                file_content = json.loads(file_content)
 
-    if not pwd_load:
-        if os.path.exists(inventory_file_path):
-            target = Conson(inventory_file_name, salt=password)
-            target.load()
-            if target() == template or len(target()) == 0:
-                return False
+        if len(file_content) != 2:
+            return Exception(f"{prefix}file content is too short.")
+        elif "users" not in file_content or "hosts" not in file_content:
+            return Exception(f"{prefix}missing keys in inventory file.")
+        elif len(file_content["users"]) == 0 or len(file_content["hosts"]) == 0:
+            return Exception(f"{prefix}t least one user and one host must be provided.")
+        elif file_content == template:
+            return Exception(f"{prefix}file is a template.")
+        else:
+            if verbose:
+                print(f"Inventory file OK")
+            return True
 
-            if not os.path.exists(users_pubkeys_dir):
-                os.mkdir(users_pubkeys_dir)
+    template = {
+        "users": {
+            "john_doe": ["pubkey", "temp_pwd"],
+            "jane_doe": ["file.pub", "temp_pwd"]
+        },
+        "hosts": {
+            "addmin@172.16.10.1:2137": "password",
+            "master@domain.org": "password",
+            "superuser@192.168.1.100": "password"
+        }
+    }
 
-            if "users" in list(target()) and "hosts" in list(target()):
-                if data_type is not None:
-                    if data_type == "hosts":
-                        for host, host_pwd in target()["hosts"].items():
-                            if host_pwd.startswith("<") and host_pwd.endswith(">"):
-                                temp_hosts = target()["hosts"]
-                                temp_hosts[host] = target.unveil(target()["hosts"][host][1:-1])
-                                target.create("hosts", temp_hosts)
-                    elif data_type == "users":
-                        temp_users = target()["users"]
-                        change = False
-                        changed_password = False
-                        pubkey_variation = {}
+    try:
+        if not pwd_load:
+            if os.path.exists(inventory_file_path):
+                verify = checkout(inventory_file_path)
+                if type(verify) is Exception:
+                    raise verify
+                elif verify:
+                    if verbose:
+                        "Loading inventory as conson instance..."
+                    target = Conson(inventory_file_name, salt=password)
+                    target.load()
 
-                        #   Check if inventory contains pubkey or pubkey file name and check its correctness
-                        for user, user_pwd in temp_users.items():
-                            pubkey_variation[user] = key_or_file(user_pwd[0])
+                    if not os.path.exists(users_pubkeys_dir):
+                        if verbose:
+                            "Creating missing 'users-pubkeys' directory..."
+                        os.mkdir(users_pubkeys_dir)
 
-                        #   Check users data correctness
-                        for user in list(temp_users):
-                            if type(temp_users[user]) is not list:
-                                temp_users[user] = [temp_users[user]]
-                                change = True
-
-                            if len(temp_users[user]) < 2:
-                                if "ssh-rsa" in pubkey_variation[user].split():
-                                    temp_users[user].append("")
-                                else:
-                                    temp_users[user].insert(0, "")
-                                    change = True
-
-                            current_pwd = temp_users[user][1]
-                            if len(current_pwd) < pwd_req_len:
-                                change = True
-                                changed_password = True
-                                new_pwd = passgen(current_pwd, pwd_req_len)
-                                temp_users[user][1] = new_pwd
-                                print(f"Temporary password for {user} changed to\t{new_pwd}\n")
-
-                            if current_pwd.startswith("<") and current_pwd.endswith(">"):
+                    if "users" in list(target()) and "hosts" in list(target()):
+                        if data_type is not None:
+                            if data_type == "hosts":
+                                if verbose:
+                                    print("Gathering hosts data...")
+                                for host, host_pwd in target()["hosts"].items():
+                                    if host_pwd.startswith("<") and host_pwd.endswith(">"):
+                                        temp_hosts = target()["hosts"]
+                                        temp_hosts[host] = target.unveil(target()["hosts"][host][1:-1])
+                                        target.create("hosts", temp_hosts)
+                            elif data_type == "users":
+                                if verbose:
+                                    print("Gathering users data...")
                                 temp_users = target()["users"]
-                                temp_users[user][1] = target.unveil(target()["users"][user][1][1:-1])
+                                change = False
+                                changed_password = False
+                                pubkey_variation = {}
+
+                                #   Check if inventory contains pubkey or pubkey file name and check its correctness
+                                for user, user_pwd in temp_users.items():
+                                    pubkey_variation[user] = key_or_file(user_pwd[0])
+
+                                #   Check users data correctness
+                                for user in list(temp_users):
+                                    if type(temp_users[user]) is not list:
+                                        temp_users[user] = [temp_users[user]]
+                                        change = True
+
+                                    if len(temp_users[user]) < 2:
+                                        if "ssh-rsa" in pubkey_variation[user].split():
+                                            temp_users[user].append("")
+                                        else:
+                                            temp_users[user].insert(0, "")
+                                            change = True
+
+                                    current_pwd = temp_users[user][1]
+                                    if len(current_pwd) < pwd_req_len:
+                                        change = True
+                                        changed_password = True
+                                        new_pwd = passgen(current_pwd, pwd_req_len)
+                                        temp_users[user][1] = new_pwd
+                                        print(f"Temporary password for {user} changed to\t{new_pwd}\n")
+
+                                    if current_pwd.startswith("<") and current_pwd.endswith(">"):
+                                        temp_users = target()["users"]
+                                        temp_users[user][1] = target.unveil(target()["users"][user][1][1:-1])
+                                        target.create("users", temp_users)
+
+                                if change:
+                                    if changed_password:
+                                        print("\nKEEP THOSE PASSWORDS IN SAFE PLACE.")
+                                        input("Press ENTER to clear and continue...")
+                                    target.create("users", temp_users)
+                                    target.save()
+
+                                for user, user_pwd in temp_users.items():
+                                    temp_users[user][0] = key_or_file(user_pwd[0])
                                 target.create("users", temp_users)
 
-                        if change:
-                            if changed_password:
-                                print("\nKEEP THOSE PASSWORDS IN SAFE PLACE.")
-                                input("Press ENTER to clear and continue...")
-                            target.create("users", temp_users)
-                            target.save()
-
-                        for user, user_pwd in temp_users.items():
-                            temp_users[user][0] = key_or_file(user_pwd[0])
-                        target.create("users", temp_users)
-
-                    return target()[data_type]
-                else:
-                    return target
+                            return target()[data_type]
+                        else:
+                            return target
+                    else:
+                        return False
             else:
+                if verbose:
+                    print("Creating inventory template...")
+                target = Conson(inventory_file_name, salt=password)
+                for temp, temp_data in template.items():
+                    target.create(temp, temp_data)
+                target.save()
                 return False
         else:
-            target = Conson(inventory_file_name, salt=password)
-            for temp, temp_data in template.items():
-                target.create(temp, temp_data)
-            target.save()
-            return False
-    else:
-        if os.path.exists(pwd_hash_file):
-            with open(pwd_hash_file, "r") as f:
-                return proceed(f.read())
-        else:
-            return proceed(False)
+            if os.path.exists(pwd_hash_file):
+                if verbose:
+                    print("Obtaining main password secret...")
+                with open(pwd_hash_file, "r") as f:
+                    return proceed(f.read())
+            else:
+                return proceed(False)
+
+    except Exception as loader_err:
+        print(f"LOADER ERROR: {loader_err}")
+        return False
 
 
 def pwd_encryption():
@@ -225,6 +319,8 @@ def pwd_encryption():
     Checks if host(s) password(s) and temporary users passwords in inventory are encrypted. If not, encrypts them.
     :return:
     """
+    if verbose:
+        print("Encrypting raw passwords...")
     changed = False
     users_changed = False
     target = loader()
@@ -269,6 +365,8 @@ def privkey_check(priv_path, pub_path):
     :param pub_path: String -> path to public key file.
     :return: String -> pubkey or None
     """
+    if verbose:
+        print("Checking public-private key pair presence...")
     global sysname
 
     if os.path.exists(priv_path):
@@ -336,6 +434,8 @@ def execute():
     Main function responsible for starting workers.
     :return:
     """
+    if verbose:
+        print("MAIN FUNCTION STARTED")
 
     def remote(remote_host, remote_pwd, users_pubkeys, is_done):
         """
@@ -354,18 +454,29 @@ def execute():
             :param cmds: String or List of shell commands to execute on remote host.
             :return: List -> stdin, stdout, stderr all together.
             """
+            if verbose:
+                print(f"{rhost} REMOTE SHELL EXECUTION: {cmds}")
             shell_output = []
             if type(cmds) is list:
                 for cmd in cmds:
+                    if verbose:
+                        print(f"\tCommand: {cmd}")
                     shell.send((cmd + "\n").encode('UTF-8'))
                     while not shell.recv_ready():
                         time.sleep(1)
-                    shell_output.append(shell.recv(65535).decode("utf-8"))
+                    response = shell.recv(65535).decode("utf-8")
+                    shell_output.append(response)
+                    if verbose:
+                        print(f"\tResponse:\n{response}\n")
             else:
                 shell.send((cmds + "\n").encode('UTF-8'))
+                if verbose:
+                    print(f"\tCommand: {cmds}")
                 while not shell.recv_ready():
                     time.sleep(1)
-                shell_output = (shell.recv(65535).decode("utf-8").split())
+                shell_output = shell.recv(65535).decode("utf-8").split()
+                if verbose:
+                    print(f"\tResponse:\n{shell_output}\n")
             return shell_output
 
         def add_user(user_name, tmp_pwd):
@@ -375,6 +486,7 @@ def execute():
             :param tmp_pwd: String -> temporary password from inventory file.
             :return:
             """
+
             #   because ssh password login will be blocked by default (only by pubkey authentication),
             #   this is only for elevating user privileges. User is forced to change on first login.
             commands = [f'useradd -m -s /bin/bash {user_name}',
@@ -513,6 +625,8 @@ def execute():
             :param supass: String -> decrypted sudo password.
             :return: paramiko.Client().invoke_shell() with sudo privileges or None if invalid password.
             """
+            if verbose:
+                print("Invoking elevated shell...")
             negative_responses = [
                 "Uwierzytelnienie się nie powiodło",
                 "Authentication failure"
@@ -529,6 +643,8 @@ def execute():
             sudo_cmd = ["su -", supass, "whoami"]
 
             for cmd in sudo_cmd:
+                if verbose:
+                    print(f"\tCommand: {cmd}")
                 timeout = 5
                 supershell.send((cmd + "\n").encode("UTF-8"))
                 while not supershell.recv_ready():
@@ -537,6 +653,8 @@ def execute():
                         return None
                 time.sleep(1)
                 super_output = supershell.recv(65535).decode("UTF-8").splitlines() if cmd == sudo_cmd[2] else []
+            if verbose:
+                print(f"\tResponse: {super_output}")
 
             try:
                 if "root" not in super_output[-2] or any(failed in super_output for failed in negative_responses):
@@ -572,7 +690,10 @@ def execute():
 
             # Acquire /etc/passwd content
             passwd_content = shell_cmd('cat /etc/passwd')
-            mod_sshd(ruser)
+            if not skip_sshd_config:
+                mod_sshd(ruser)
+            else:
+                print("Skipping sshd_config modification...")
             mod_authkeys(ruser, app_pubkey)
 
             #   Iterate over users from inventory and set flags if username contains ! or #.
@@ -595,7 +716,8 @@ def execute():
                 if not user_present and not remove_flag:
                     print(f"{rhost}: {user} does not exist, creating...")
                     add_user(user, pubkey_pwd[1])
-                    mod_sshd(user)
+                    if not skip_sshd_config:
+                        mod_sshd(ruser)
                     mod_authkeys(user, pubkey_pwd[0])
                     # Lock user if required.
                     if lock_flag:
@@ -609,7 +731,8 @@ def execute():
                     else:
                         #   If user exists, try to update host configuration for this user.
                         print(f"{rhost}: {user} already exists, updating...")
-                        mod_sshd(user)
+                        if not skip_sshd_config:
+                            mod_sshd(ruser)
                         mod_authkeys(user, pubkey_pwd[0])
             #   Attempt sshd service restart.
             try:
@@ -631,6 +754,8 @@ def execute():
 
     #   For each host introduced in inventory file, run concurrent thread.
     print("Establishing connections and acquiring superuser privileges...")
+    if o_b_o:
+        print("\nONE-BY-ONE MODE ACTIVE\n")
     results = {}
     threads = {}
     max_thread_try = 3
@@ -651,19 +776,44 @@ def execute():
                     threads[host] = threading.Thread(target=remote, args=(host, sudo_pwd, users, results[host][0]))
                     threads[host].start()
                     done = False
+                    if o_b_o:
+                        threads[host].join()
                 else:
                     print(f"Job failed for {host}; check host configuration and inventory file.")
             elif result:
                 results[host][0].put(True)
 
-        for thread in list(threads.values()):
-            thread.join()
+        if not o_b_o:
+            for thread in list(threads.values()):
+                thread.join()
 
     print("\n\nAll jobs done.")
     input("Press enter to exit...")
     clean()
 
 
+def help_incoming():
+    def get_format():
+        if __file__.endswith(".py"):
+            return "python3 addmin.py"
+        elif __file__.endswith(".exe"):
+            return "addmin.exe"
+        else:
+            return "addmin"
+    i_am_helping = """
+    {} [flag]
+    
+    Flags:
+    -v, v, --verbose\t\tPrints as much (useful) data as it is possible.
+    -i, i, --init\t\tCheck files only. Also, performs encryption on passwords in inventory file (if possible). 
+    -s, s, --skip-sshd\t\tDo not modify sshd_config file on remote hosts.
+    -o, o, --one-by-one\t\tRun operations(threads) on hosts one-by-one, not on all simultaneously.
+    -h, h, --help\t\tShows this message.
+    """.format(get_format())
+    print(i_am_helping)
+
+
+#   Global variables:
 inventory_file_name = "inventory"
 inventory_file_path = os.path.join(os.getcwd(), inventory_file_name)
 pwd_hash_file = os.path.join(os.getcwd(), ".secret")
@@ -673,6 +823,16 @@ users_pubkeys_dir = os.path.join(os.getcwd(), "users-pubkeys")
 pwd_req_len = 12
 sysname = pc_data("nodename")
 
+
+if len(sys.argv) > 1 and not (verbose or initiate or skip_sshd_config or o_b_o or send_help):
+    send_help = True
+
+# This is self-explanatory...
+if send_help:
+    help_incoming()
+    sys.exit()
+
+#   Init section:
 password = loader(True)
 users = loader(False, "users")
 hosts = loader(False, "hosts")
@@ -688,4 +848,12 @@ else:
     #   Check if remote hosts passwords in inventory requires encryption.
     pwd_encryption()
     #   Run main function.
-    execute()
+    if initiate:
+        print("Initiation done.")
+        input("Press ENTER to exit...")
+        clean()
+        sys.exit()
+    else:
+        if verbose:
+            print("Initiation done.")
+        execute()

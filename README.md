@@ -15,6 +15,15 @@ Requirements:
 
 -------------------------------
 
+v1.2.5
+-added switches to change certain script functions:
+
+    -v, v, --verbose        Prints as much (useful) data as it is possible.
+    -i, i, --init           Check files only. Also, performs encryption on passwords in inventory file (if possible). 
+    -s, s, --skip-sshd      Do not modify sshd_config file on remote hosts.
+    -o, o, --one-by-one     Run operations(threads) on hosts one-by-one, not on all simultaneously.
+    -h, h, --help           Shows help message.
+
 v1.2.0
 
 -added function for reading user pubkey from file (subdir users-pubkeys, created automatically);
