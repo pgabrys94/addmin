@@ -15,7 +15,7 @@ Requirements:
 
 -------------------------------
 
-v1.2.5
+v1.2.6
 -added switches to change certain script functions:
 
     -v, v, --verbose        Prints as much (useful) data as it is possible.
