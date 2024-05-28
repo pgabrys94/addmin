@@ -1,6 +1,4 @@
 #   version = 1.2.6
-import json
-
 from conson import Conson
 from getpass import getpass
 import paramiko
@@ -13,6 +11,7 @@ import secrets
 import string
 import platform
 import queue
+import json
 
 
 #   Flags:
