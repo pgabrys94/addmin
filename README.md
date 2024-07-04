@@ -15,6 +15,9 @@ Requirements:
 
 -------------------------------
 
+v1.2.8
+-added host excluding by hashtag in addmin user
+
 v1.2.6
 -added switches to change certain script functions:
 
@@ -77,7 +80,7 @@ Blocked user will be unable to log both by sshd (by removing from AllowUsers sec
 
 Note, that users will persist in inventory file - you can easily restore them by removing prefixes.
 
-You can also exclude host from execution by putting hashtag, just like in user account locking.
+[v1.2.8] You can also exclude host from execution by putting hashtag, just like in user account locking.
 
         "hosts": {
             "#addmin@host": "root_pwd"
