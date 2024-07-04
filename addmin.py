@@ -1,4 +1,4 @@
-#   version = 1.2.6
+#   version = 1.2.8
 from conson import Conson
 from getpass import getpass
 import paramiko
@@ -769,6 +769,11 @@ def execute():
 
     for host in list(hosts):
         results[host] = [queue.Queue(), 0]
+
+    for host in list(hosts):
+        if host.startswith("#"):
+            print(f"Skipping {host[1:]}:")
+            hosts.pop(host)
 
     done = False
     while not done:
