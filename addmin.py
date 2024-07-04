@@ -294,6 +294,12 @@ def loader(pwd_load=False, data_type=None):
             else:
                 if verbose:
                     print("Creating inventory template...")
+
+                if not os.path.exists(users_pubkeys_dir):
+                    if verbose:
+                        "Creating missing 'users-pubkeys' directory..."
+                    os.mkdir(users_pubkeys_dir)
+
                 target = Conson(inventory_file_name, salt=password)
                 for temp, temp_data in template.items():
                     target.create(temp, temp_data)
