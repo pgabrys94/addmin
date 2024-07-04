@@ -515,6 +515,7 @@ def execute():
                 shell_cmd(f'echo "AllowUsers {user_name}" | tee -a /etc/ssh/sshd_config')
             else:
                 #   Enable ssh login for user.
+
                 if user_name not in sshd_out:
                     shell_cmd(f'sed -i "/^AllowUsers/s/$/ {user_name}/" /etc/ssh/sshd_config')
             # Performed by first invoke (addmin user).
@@ -537,6 +538,7 @@ def execute():
             :param user_pubkey: String -> string with rsa public key.
             :return:
             """
+
             if len(user_pubkey) == 0 or "ssh-rsa" not in user_pubkey:
                 print(f"WARNING: Missing ssh-rsa pubkey for {user_name}, skipping...")
                 return
@@ -731,7 +733,7 @@ def execute():
                         #   If user exists, try to update host configuration for this user.
                         print(f"{rhost}: {user} already exists, updating...")
                         if not skip_sshd_config:
-                            mod_sshd(ruser)
+                            mod_sshd(user)
                         mod_authkeys(user, pubkey_pwd[0])
             #   Attempt sshd service restart.
             try:
