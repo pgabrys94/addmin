@@ -724,7 +724,7 @@ def execute():
                     print(f"{rhost}: {user} does not exist, creating...")
                     add_user(user, pubkey_pwd[1])
                     if not skip_sshd_config:
-                        mod_sshd(ruser)
+                        mod_sshd(user)
                     mod_authkeys(user, pubkey_pwd[0])
                     # Lock user if required.
                     if lock_flag:
