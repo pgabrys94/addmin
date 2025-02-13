@@ -14,6 +14,10 @@ Requirements:
     pip install bcrypt conson paramiko
 
 -------------------------------
+v1.2.9
+-sshd settings are now being written into sshd_config.d/<hostname>.conf instead of sshd_config file,
+-elevating sudo shell will also try 'sudo -i' if 'su -' will fail.
+
 
 v1.2.8
 -added host excluding by hashtag in addmin user

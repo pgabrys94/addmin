@@ -1,4 +1,4 @@
-#   version = 1.2.8
+#   version = 1.2.9
 from conson import Conson
 from getpass import getpass
 import paramiko
@@ -511,31 +511,65 @@ def execute():
 
         def mod_sshd(user_name):
             """
-            Sub-function modiying ssh server configuration file.
+            Sub-function modifying ssh server configuration file.
             :param user_name: String -> username.
             :return:
             """
-            sshd_out = shell_cmd('cat /etc/ssh/sshd_config')
-            #   Check if proper section exists in config file.
-            if "AllowUsers" not in sshd_out:
-                shell_cmd(f'echo "AllowUsers {user_name}" | tee -a /etc/ssh/sshd_config')
-            else:
-                #   Enable ssh login for user.
 
-                if user_name not in sshd_out:
-                    shell_cmd(f'sed -i "/^AllowUsers/s/$/ {user_name}/" /etc/ssh/sshd_config')
-            # Performed by first invoke (addmin user).
-            if user_name == ruser:
-                sshd_params = ["PermitRootLogin", "PasswordAuthentication", "Protocol"]
-                for param in sshd_params:
-                    flag = 2 if param == sshd_params[2] else "no"
-                    if param not in sshd_out:
-                        shell_cmd(f'echo "{param} {flag}" | tee -a /etc/ssh/sshd_config')
-                    else:
-                        if list(reversed(sshd_out))[list(reversed(sshd_out)).index(param) - 1] == "#":
-                            shell_cmd(f'echo "{param} {flag}" | tee -a /etc/ssh/sshd_config')
-                        elif sshd_out[sshd_out.index(param) + 1] != flag:
-                            shell_cmd(f"sed -i 's/^\s*\({param}\s*\).*$/\1{flag}/' /etc/ssh/sshd_config")
+            sshd_params = {
+                "Protocol": 2,
+                "PasswordAuthentication": "no",
+                "PermitRootLogin": "no",
+                "AllowUsers": f"{user_name}"
+            }
+            conf_dir = "/etc/ssh/sshd_config.d/"
+            conf_name = remote_host.split("@")[0] + ".conf"
+            sshd_out_ls = shell_cmd(f'test -f {conf_dir}{conf_name} && echo "Exists" || echo "NotExists"')
+            sshd_exists = "Exists" in sshd_out_ls
+            cfg = {}
+
+            if verbose:
+                print(f"Looking for {conf_name}...", "FOUND" if sshd_exists else "NOT FOUND")
+
+            if "NotExists" in sshd_out_ls:
+                # Create new sshd config file
+                for key, value in sshd_params.items():
+                    sshd_cmd = f"echo '{key} {value}' >> {conf_dir}{conf_name}"
+                    if verbose:
+                        print(f"RUNNING: {sshd_cmd}")
+                    shell_cmd(sshd_cmd)
+                if verbose:
+                    print(f"{conf_name} created: {sshd_params}")
+            else:
+                # Read current configuration and save it to dictionary
+                for key, value in sshd_params.items():
+                    if key in sshd_params.keys():
+                        if key != "AllowUsers":
+                            cfg[key] = shell_cmd(f'grep {key} {conf_dir}{conf_name}')[-2]
+                            if verbose:
+                                print(f"Key: {key} Current value: {cfg[key]}")
+                        elif key == "AllowUsers":
+                            cmd_result = shell_cmd(f'grep {key} {conf_dir}{conf_name}')[::-1]
+                            cfg[key] = cmd_result[1:cmd_result.index("AllowUsers")]
+                            if verbose:
+                                print(f"Key: {key} Current value: {cfg[key]}")
+
+                if user_name not in cfg["AllowUsers"]:
+                    cfg["AllowUsers"].append(user_name)
+
+                shell_cmd(f"rm {conf_dir}{conf_name}")
+                for key, value in cfg.items():
+                    if key != "AllowUsers":
+                        sshd_cmd = f"echo '{key} {value}' >> {conf_dir}{conf_name}"
+                        if verbose:
+                            print(f"RUNNING: {sshd_cmd}")
+                        shell_cmd(sshd_cmd)
+                    elif key == "AllowUsers":
+                        user_list = " ".join(value)
+                        sshd_cmd = f"echo '{key} {user_list}' >> {conf_dir}{conf_name}"
+                        if verbose:
+                            print(f"RUNNING: {sshd_cmd}")
+                        shell_cmd(sshd_cmd)
 
         def mod_authkeys(user_name, user_pubkey):
             """
@@ -665,7 +699,28 @@ def execute():
 
             try:
                 if "root" not in super_output[-2] or any(failed in super_output for failed in negative_responses):
-                    return None
+                    if verbose:
+                        print("'su -' failed, trying 'sudo -i'...")
+                    sudo_cmd = ["sudo -i", supass, "whoami"]
+
+                    for cmd in sudo_cmd:
+                        if verbose:
+                            print(f"\tCommand: {cmd}")
+                        timeout = 5
+                        supershell.send((cmd + "\n").encode("UTF-8"))
+                        while not supershell.recv_ready():
+                            time.sleep(0.25)
+                            if timeout <= 0:
+                                return None
+                        time.sleep(1)
+                        super_output = supershell.recv(65535).decode("UTF-8").splitlines() if cmd == sudo_cmd[2] else []
+                    if verbose:
+                        print(f"\tResponse: {super_output}")
+
+                    if "root" not in super_output[-2] or any(failed in super_output for failed in negative_responses):
+                        return None
+                    else:
+                        return supershell
                 else:
                     return supershell
             except Exception:
