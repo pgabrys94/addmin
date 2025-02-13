@@ -666,6 +666,25 @@ def execute():
             :param supass: String -> decrypted sudo password.
             :return: paramiko.Client().invoke_shell() with sudo privileges or None if invalid password.
             """
+
+            def elevate(commands):
+                super_output = []
+                for cmd in commands:
+                    if verbose:
+                        print(f"\tCommand: {cmd}")
+
+                    supershell.send((cmd + "\n").encode("UTF-8"))
+                    while not supershell.recv_ready():
+                        time.sleep(0.25)
+                        if timeout <= 0:
+                            return None
+                    time.sleep(1)
+                    super_output = supershell.recv(65535).decode("UTF-8").splitlines() if cmd == sudo_cmd[2] else []
+                if verbose:
+                    print(f"\tResponse: {super_output}")
+
+                return super_output
+
             if verbose:
                 print("Invoking elevated shell...")
             negative_responses = [
@@ -674,56 +693,33 @@ def execute():
             ]
             timeout = 5
             supershell = client.invoke_shell()
-            super_output = []
+
             while supershell.recv_ready():
                 time.sleep(0.25)
                 timeout -= 0.25
                 if timeout <= 0:
                     return None
             supershell.recv(65535)
-            sudo_cmd = ["su -", supass, "whoami"]
+            su_cmd = ["su -", supass, "whoami"]
+            sudo_cmd = ["sudo -i", supass, "whoami"]
 
-            for cmd in sudo_cmd:
-                if verbose:
-                    print(f"\tCommand: {cmd}")
-                timeout = 5
-                supershell.send((cmd + "\n").encode("UTF-8"))
-                while not supershell.recv_ready():
-                    time.sleep(0.25)
-                    if timeout <= 0:
-                        return None
-                time.sleep(1)
-                super_output = supershell.recv(65535).decode("UTF-8").splitlines() if cmd == sudo_cmd[2] else []
-            if verbose:
-                print(f"\tResponse: {super_output}")
 
             try:
-                if "root" not in super_output[-2] or any(failed in super_output for failed in negative_responses):
+                try_su = elevate(su_cmd)
+                if "root" not in try_su[-2] or any(failed in try_su for failed in negative_responses):
                     if verbose:
-                        print("'su -' failed, trying 'sudo -i'...")
-                    sudo_cmd = ["sudo -i", supass, "whoami"]
+                        print("'su' failed, trying 'sudo'...")
+                    try_sudo = elevate(sudo_cmd)
 
-                    for cmd in sudo_cmd:
-                        if verbose:
-                            print(f"\tCommand: {cmd}")
-                        timeout = 5
-                        supershell.send((cmd + "\n").encode("UTF-8"))
-                        while not supershell.recv_ready():
-                            time.sleep(0.25)
-                            if timeout <= 0:
-                                return None
-                        time.sleep(1)
-                        super_output = supershell.recv(65535).decode("UTF-8").splitlines() if cmd == sudo_cmd[2] else []
-                    if verbose:
-                        print(f"\tResponse: {super_output}")
-
-                    if "root" not in super_output[-2] or any(failed in super_output for failed in negative_responses):
+                    if "root" not in try_sudo[-2] or any(failed in try_sudo for failed in negative_responses):
                         return None
                     else:
                         return supershell
                 else:
                     return supershell
-            except Exception:
+            except Exception as err:
+                if verbose:
+                    print(err)
                 return None
 
         ruser, rhost = remote_host.split(":")[0].split("@")
